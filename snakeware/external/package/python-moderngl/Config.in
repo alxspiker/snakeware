@@ -1,0 +1,4 @@
+config BR2_PACKAGE_PYTHON_MODERNGL
+    bool "python-moderngl"
+    help
+      ModernGL: Modern OpenGL binding for Python.
