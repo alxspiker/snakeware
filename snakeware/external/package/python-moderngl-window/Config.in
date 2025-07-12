@@ -1,0 +1,5 @@
+config BR2_PACKAGE_PYTHON_MODERNGL_WINDOW
+    bool "python-moderngl-window"
+    depends on BR2_PACKAGE_PYTHON_MODERNGL
+    help
+      Cross-platform utility library for ModernGL.
