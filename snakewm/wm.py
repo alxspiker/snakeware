@@ -1,246 +1,387 @@
 """
-Snake Window Manager - ModernGL Version
+Snake Window Manager
 """
+
+TESTMODE = __name__ == "__main__"
 
 import os
 import sys
 import importlib
-import numpy as np
-import moderngl
-from moderngl_window.context.base import BaseWindow
-import evdev  # Ensure BR2_PACKAGE_PYTHON_EVDEV=y in defconfig
-import freetype as ft  # Add BR2_PACKAGE_PYTHON_FREETYPE_PY=y (custom package)
+import struct
 
-TESTMODE = __name__ == "__main__"
+import pygame, pygame_gui
+import moderngl
 
 if TESTMODE:
     from appmenu.appmenupanel import AppMenuPanel
+
     from snakebg.bg import SnakeBG
     from snakebg.bgmenu import SnakeBGMenu
 else:
     from snakewm.appmenu.appmenupanel import AppMenuPanel
+
     from snakewm.snakebg.bg import SnakeBG
     from snakewm.snakebg.bgmenu import SnakeBGMenu
 
-os.environ['EGL_PLATFORM'] = 'drm'
-os.environ['MESA_GL_VERSION_OVERRIDE'] = '4.3'  # Adjust based on hardware
 
-class SnakeWM(BaseWindow):
+class SnakeWM:
     SCREEN = None
     DIMS = None
-    BG_COLOR = (0.0, 0.5, 0.5)  # Teal blue for modern look
+    BG = None
+    MANAGER = None
 
-    # Paint properties (modernized with shaders)
+    BG_COLOR = (0, 128, 128)
+
+    # background color paint properties
     PAINT = False
-    PAINT_RADIUS = 10.0
+    PAINT_RADIUS = 10
+
+    # 16 color palette
     PAINT_COLOR = 0
     PAINT_COLOR_LIST = [
-        (1.0, 1.0, 1.0), (0.75, 0.75, 0.75), (0.5, 0.5, 0.5), (0.0, 0.0, 0.0),
-        (0.0, 1.0, 0.0), (0.0, 0.5, 0.0), (0.5, 0.5, 0.0), (0.0, 0.5, 0.5),
-        (1.0, 0.0, 0.0), (0.5, 0.0, 0.0), (0.5, 0.0, 0.5), (1.0, 0.0, 1.0),
-        (0.0, 0.0, 1.0), (0.0, 0.0, 0.5), (0.0, 1.0, 1.0), (1.0, 1.0, 0.0),
+        (255, 255, 255),
+        (192, 192, 192),
+        (128, 128, 128),
+        (0, 0, 0),
+        (0, 255, 0),
+        (0, 128, 0),
+        (128, 128, 0),
+        (0, 128, 128),
+        (255, 0, 0),
+        (128, 0, 0),
+        (128, 0, 128),
+        (255, 0, 255),
+        (0, 0, 255),
+        (0, 0, 128),
+        (0, 255, 255),
+        (255, 255, 0),
     ]
+
+    # paint shapes
     PAINT_SHAPE = 0
     NUM_SHAPES = 3
 
-    # Dynamic BG and menu
+    # reference to SnakeBG object for dynamic backgrounds
     DYNBG = None
     DYNBG_MENU = None
 
-    # Focused window
+    # currently focused window
     FOCUS = None
 
-    # Apps tree
+    # dict that will contain the apps directory structure
     APPS = {}
+    # reference to the root app menu object
     APPMENU = None
 
-    # Font for text rendering (modern UI)
-    FONT = None
-    FONT_TEXTURES = {}  # Cache glyph textures
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-        # DRM setup with fallback
-        try:
-            self.drm_fd = os.open('/dev/dri/card0', os.O_RDWR)
-            self.ctx = moderngl.create_context(standalone=True, require=430)
-        except OSError:
-            # Fallback to software context if DRM fails
-            self.ctx = moderngl.create_context(standalone=True, backend='egl')  # Or 'glx' if X is available
-            print("Warning: DRM failed, using fallback context")
-
-        # Get screen dimensions (assume from DRM or fallback)
-        self.DIMS = (1920, 1080)  # Replace with actual query if possible (use pydrm)
-
-        # Basic shader for colored quads (modern: with gradient uniform)
-        self.prog = self.ctx.program(
-            vertex_shader='''
-                #version 430
-                in vec2 in_vert;
-                in vec3 in_color;
-                out vec3 v_color;
-                uniform mat4 model;
-                void main() {
-                    gl_Position = model * vec4(in_vert, 0.0, 1.0);
-                    v_color = in_color;
-                }
-            ''',
-            fragment_shader='''
-                #version 430
-                in vec3 v_color;
-                out vec4 f_color;
-                void main() {
-                    f_color = vec4(v_color, 1.0);
-                }
-            '''
-        )
-
-        # Background gradient quad
-        self.bg_vertices = self.ctx.buffer(np.array([
-            -1.0, -1.0, 0.0, 0.5, 1.0,  # Bottom-left
-            1.0, -1.0, 0.0, 0.2, 0.8,   # Bottom-right
-            -1.0, 1.0, 0.1, 0.1, 0.5,   # Top-left
-            1.0, 1.0, 0.0, 0.0, 0.3,    # Top-right (darker blue gradient)
-        ], dtype='f4'))
-
-        self.bg_vao = self.ctx.vertex_array(self.prog, self.bg_vertices, 'in_vert in_color')
-
-        # Input devices
-        self.keyboard = evdev.InputDevice('/dev/input/event0')  # Keyboard event
-        self.mouse = evdev.InputDevice('/dev/input/event1')  # Mouse event
-
-        # Populate apps tree
+    def __init__(self):
+        # populate the apps tree
         apps_path = os.path.dirname(os.path.abspath(__file__)) + "/apps"
-        self.iter_dir(self.APPS, apps_path)
+        SnakeWM.iter_dir(self.APPS, apps_path)
 
-        # Load font for text (modern UI fonts)
-        self.FONT = ft.Face('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')  # Assume font in system
-        self.FONT.set_pixel_sizes(0, 24)  # Size 24
+        pygame.init()
 
-        # Modern UI: Windows as list of dicts (position, size, color, texture for content)
-        self.windows = []
+        # initialize pygame to framebuffer
+        os.putenv("SDL_FBDEV", "/dev/fb0")
+        pygame.display.init()
 
-    @staticmethod
+        # get screen dimensions
+        self.DIMS = (pygame.display.Info().current_w, pygame.display.Info().current_h)
+
+        # init virtual screen for Pygame drawing
+        self.virtual_screen = pygame.Surface(self.DIMS, flags=pygame.SRCALPHA)
+        self.SCREEN = self.virtual_screen
+
+        # init actual display with OpenGL
+        pygame.display.set_mode(self.DIMS, pygame.FULLSCREEN | pygame.OPENGL | pygame.DOUBLEBUF)
+
+        # init ModernGL context
+        self.ctx = moderngl.create_context()
+
+        # shaders
+        vertex_shader = '''
+        #version 330
+        in vec2 vert;
+        in vec2 in_text;
+        out vec2 v_text;
+        void main() {
+            gl_Position = vec4(vert, 0.0, 1.0);
+            v_text = in_text;
+        }
+        '''
+        fragment_shader = '''
+        #version 330
+        out vec4 f_color;
+        in vec2 v_text;
+        uniform sampler2D Texture;
+        void main() {
+            f_color = texture(Texture, v_text);
+        }
+        '''
+
+        self.prog = self.ctx.program(vertex_shader=vertex_shader, fragment_shader=fragment_shader)
+
+        world_coordinates = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0]
+        texture_coordinates = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0]
+        render_indices = [0, 1, 2, 1, 2, 3]
+
+        self.vbo_w = self.ctx.buffer(struct.pack('8f', *world_coordinates))
+        self.vbo_t = self.ctx.buffer(struct.pack('8f', *texture_coordinates))
+        self.ibo = self.ctx.buffer(struct.pack('6I', *render_indices))
+
+        va_content = [
+            (self.vbo_w, '2f', 'vert'),
+            (self.vbo_t, '2f', 'in_text'),
+        ]
+
+        self.vao = self.ctx.vertex_array(self.prog, va_content, self.ibo)
+
+        self.screen_texture = self.ctx.texture(self.DIMS, 4)
+        self.screen_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+
+        # enable blending for alpha
+        self.ctx.enable(moderngl.BLEND)
+
+        # init background
+        self.BG = pygame.Surface((self.DIMS))
+        self.BG.fill(self.BG_COLOR)
+
+        self.BRUSH_SURF = pygame.Surface((self.DIMS), flags=pygame.SRCALPHA)
+        self.BRUSH_SURF.fill((0, 0, 0, 0))
+
+        # init UI manager
+        self.MANAGER = pygame_gui.UIManager(self.DIMS)
+
+        pygame.mouse.set_visible(True)
+
     def iter_dir(tree, path):
+        """
+        Static function that recursively populates dict 'tree' with the
+        app directory structure starting at 'path'.
+        """
         for f in os.listdir(path):
-            if os.path.isfile(os.path.join(path, f, "__init__.py")):
+            if os.path.isfile(path + "/" + f + "/__init__.py"):
                 tree[f] = None
-            elif os.path.isdir(os.path.join(path, f)):
+            elif os.path.isdir(path + "/" + f):
                 tree[f] = {}
-                SnakeWM.iter_dir(tree[f], os.path.join(path, f))
+                SnakeWM.iter_dir(tree[f], path + "/" + f)
 
     def loadapp(self, app, params=None):
+        """
+        Load and run a Python module as an app (ie "apps.test.HelloWorld").
+        Apps are basically just Python packages. The loaded app package must
+        contain an __init__.py with a load() function that accepts a UIManager
+        parameter and a params list parameter.
+
+        The load() function should create an instance of the app to load and
+        add the app UI to the passed UIManager object. See existing apps for
+        examples.
+        """
         if not TESTMODE:
             app = "snakewm." + app
 
         _app = importlib.import_module(app)
 
         try:
-            # Apps now return a 'window' dict with pos, size, color, content func
-            window = _app.load(params)  # Assume apps updated to return dict
-            self.windows.append(window)
+            _app.load(self.MANAGER, params)
         except:
-            self.ctx.finish()
+            pygame.quit()
 
     def appmenu_load(self, app):
+        """
+        This function is passed to AppMenuPanel objects to be called when
+        an app is selected to be opened.
+        The root app menu is destroyed, and the app is loaded.
+        """
         if self.APPMENU is not None:
-            self.APPMENU = None  # Close menu (no destroy, as no Pygame UI)
+            self.APPMENU.destroy()
+            self.APPMENU = None
 
         self.loadapp(app)
 
     def set_bg_color(self, color):
+        """
+        Set the desktop background to 'color', where color is an RGB tuple.
+        """
+        self.BG = pygame.Surface((self.DIMS))
         self.BG_COLOR = color
+        self.BG.fill(self.BG_COLOR)
 
     def set_bg_image(self, file):
-        # Load image to texture (use PIL or built-in, assume PIL added)
-        import PIL.Image
-        img = PIL.Image.open(file)
-        self.bg_texture = self.ctx.texture(img.size, 3, img.tobytes())
-        # Update shader to use texture uniform
-
-    def render_text(self, text, pos, color):
-        # Simple glyph rendering (modern: cache textures)
-        for char in text:
-            if char not in self.FONT_TEXTURES:
-                self.FONT.load_char(char)
-                glyph = self.FONT.glyph
-                bitmap = glyph.bitmap
-                tex_data = np.array(bitmap.buffer, dtype='u1').reshape(bitmap.rows, bitmap.width)
-                tex = self.ctx.texture((bitmap.width, bitmap.rows), 1, tex_data.tobytes())
-                self.FONT_TEXTURES[char] = tex
-
-            # Draw textured quad at pos for char
-            # ... (implement quad with texture shader)
-            pos = (pos[0] + self.FONT.advance.x / 64, pos[1])
-
-    def render(self):
-        self.ctx.clear(*self.BG_COLOR)
-
-        # Render background gradient
-        self.prog['model'].value = np.eye(4)  # Identity matrix
-        self.bg_vao.render(moderngl.TRIANGLE_STRIP)
-
-        # Render windows (modern: with shadow shader)
-        for window in self.windows:
-            # Draw window quad with border/shadow
-            # Example shader uniform for position/size
-            model = np.eye(4)
-            model = np.translate(model, window['pos'][0] / self.DIMS[0] * 2 - 1, window['pos'][1] / self.DIMS[1] * 2 - 1, 0)
-            model = np.scale(model, window['size'][0] / self.DIMS[0], window['size'][1] / self.DIMS[1], 1)
-            self.prog['model'].value = model.flatten()
-            self.vao.render(moderngl.TRIANGLE_STRIP)  # Assume vao for window quad
-
-            # Render window content (app.draw())
-            if 'content' in window:
-                window['content'](self.ctx)
-
-            # Render title/text
-            self.render_text(window['title'], window['pos'], (1.0, 1.0, 1.0))
-
-        # Render menu if open (modern: semi-transparent list with shadow)
-        if self.APPMENU:
-            # Draw menu quad
-            # List items with text
-            for i, item in enumerate(self.menu_items):
-                self.render_text(item, (100, 100 + i * 30), (1.0, 1.0, 1.0))
-
-        # Paint mode (modern: draw shapes with shaders)
-        if self.PAINT:
-            mpos = self.mouse_pos  # From mouse event
-            color = self.PAINT_COLOR_LIST[self.PAINT_COLOR]
-            if self.PAINT_SHAPE == 0:  # Circle
-                # Draw circle quad approximation
-                pass  # Implement circle shader or tesselate
-            # Similarly for square/triangle
-
-        if self.DYNBG:
-            self.DYNBG.draw(self.ctx)  # Assume updated to ModernGL
+        """
+        Sets the desktop background to an image.
+        """
+        filename, file_extension = os.path.splitext(file)
+        if file_extension == ".jpg" or file_extension == ".png":
+            self.BG = pygame.transform.scale(pygame.image.load(file), self.DIMS)
 
     def run(self):
-        self.running = True
-        while self.running:
-            # Poll input
-            for event in self.keyboard.read():
-                if event.type == evdev.ecodes.EV_KEY and event.value == 1:  # Key down
-                    if event.code == evdev.ecodes.KEY_LEFTMETA:
+        clock = pygame.time.Clock()
+        running = True
+
+        while running:
+            delta = clock.tick(60) / 1000.0
+
+            pressed = pygame.key.get_pressed()
+
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_LSUPER:
                         if self.APPMENU is None:
-                            self.APPMENU = True  # Toggle menu
+                            # open app menu
+                            self.APPMENU = AppMenuPanel(
+                                self.MANAGER,
+                                (0, 0),
+                                "apps",
+                                self.APPS,
+                                self.appmenu_load,
+                            )
                         else:
+                            # close app menu
+                            self.APPMENU.destroy()
                             self.APPMENU = None
-                    if event.code == evdev.ecodes.KEY_LALT:
-                        # Handle Alt combinations
-                        pass
 
-            # Mouse events
-            for event in self.mouse.read():
-                if event.type == evdev.ecodes.EV_ABS:
-                    # Update mouse pos
-                    pass
+                    if pressed[pygame.K_LALT]:
+                        if event.key == pygame.K_ESCAPE:
+                            running = False
+                            pygame.quit()
+                            exit()
+                        elif event.key == pygame.K_p:
+                            # toggle paint mode
+                            self.PAINT = not self.PAINT
+                            self.BRUSH_SURF.fill((0, 0, 0, 0))
+                        elif event.key == pygame.K_d:
+                            # toggle dynamic background
+                            if self.DYNBG is None and self.DYNBG_MENU is None:
+                                self.DYNBG_MENU = SnakeBGMenu(self.MANAGER)
+                            elif self.DYNBG is not None:
+                                del self.DYNBG
+                                self.DYNBG = None
 
-            self.render()
-            self.ctx.finish()  # Swap implicitly or manual DRM flip
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if self.PAINT:
+                        if event.button == 4:
+                            # mouse wheel up
+                            if pressed[pygame.K_LALT]:
+                                self.PAINT_COLOR = (self.PAINT_COLOR + 1) % len(
+                                    self.PAINT_COLOR_LIST
+                                )
+                            elif pressed[pygame.K_LCTRL]:
+                                self.PAINT_SHAPE = (
+                                    self.PAINT_SHAPE + 1
+                                ) % self.NUM_SHAPES
+                            else:
+                                self.PAINT_RADIUS += 2
+                        elif event.button == 5:
+                            # mouse wheel down
+                            if pressed[pygame.K_LALT]:
+                                self.PAINT_COLOR = (self.PAINT_COLOR - 1) % len(
+                                    self.PAINT_COLOR_LIST
+                                )
+                            elif pressed[pygame.K_LCTRL]:
+                                self.PAINT_SHAPE = (
+                                    self.PAINT_SHAPE - 1
+                                ) % self.NUM_SHAPES
+                            else:
+                                self.PAINT_RADIUS -= 2
+                            if self.PAINT_RADIUS < 2:
+                                self.PAINT_RADIUS = 2
+                elif event.type == pygame.USEREVENT:
+                    if event.user_type == "window_selected":
+                        # focus selected window
+                        if self.FOCUS is not None:
+                            self.FOCUS.unfocus()
+                        self.FOCUS = event.ui_element
+                        self.FOCUS.focus()
+                    elif event.user_type == pygame_gui.UI_COLOUR_PICKER_COLOUR_PICKED:
+                        if event.ui_object_id == "#desktop_colour_picker":
+                            # set desktop background color - no alpha channel
+                            self.set_bg_color(event.colour[:-1])
+                    elif event.user_type == pygame_gui.UI_FILE_DIALOG_PATH_PICKED:
+                        if event.ui_object_id == "#background_picker":
+                            self.set_bg_image(event.text)
+                    elif event.user_type == pygame_gui.UI_BUTTON_PRESSED:
+                        if "#bgmenu" in event.ui_object_id:
+                            if "close_button" in event.ui_object_id:
+                                self.DYNBG_MENU.kill()
+                                del self.DYNBG_MENU
+                                self.DYNBG_MENU = None
+                            elif not "title_bar" in event.ui_object_id:
+                                selected_bg = event.ui_object_id.split(".")[1]
+                                self.DYNBG = SnakeBG(selected_bg, TESTMODE)
+                                self.DYNBG_MENU.kill()
+                                del self.DYNBG_MENU
+                                self.DYNBG_MENU = None
 
-if __name__ == '__main__':
+                                self.PAINT = False
+
+                self.MANAGER.process_events(event)
+
+            self.MANAGER.update(delta)
+
+            # blit paintbrush/dynbg layer
+            if self.DYNBG is not None:
+                # update dynamic background
+                self.DYNBG.draw(self.BRUSH_SURF)
+                self.SCREEN.blit(self.BG, (0, 0))
+                self.SCREEN.blit(self.BRUSH_SURF, (0, 0))
+            elif self.PAINT:
+                mpos = pygame.mouse.get_pos()
+
+                # default drawing the brush to the temporary brush layer
+                draw_surf = self.BRUSH_SURF
+
+                if pygame.mouse.get_pressed()[0]:
+                    # paint to the actual background
+                    draw_surf = self.BG
+
+                if self.PAINT_SHAPE == 0:
+                    # circle
+                    pygame.draw.circle(
+                        draw_surf,
+                        self.PAINT_COLOR_LIST[self.PAINT_COLOR],
+                        mpos,
+                        self.PAINT_RADIUS,
+                    )
+                elif self.PAINT_SHAPE == 1:
+                    # square
+                    pygame.draw.rect(
+                        draw_surf,
+                        self.PAINT_COLOR_LIST[self.PAINT_COLOR],
+                        pygame.Rect(
+                            (mpos[0] - self.PAINT_RADIUS, mpos[1] - self.PAINT_RADIUS),
+                            (self.PAINT_RADIUS * 2, self.PAINT_RADIUS * 2),
+                        ),
+                    )
+                elif self.PAINT_SHAPE == 2:
+                    # triangle
+                    pygame.draw.polygon(
+                        draw_surf,
+                        self.PAINT_COLOR_LIST[self.PAINT_COLOR],
+                        (
+                            (mpos[0] - self.PAINT_RADIUS, mpos[1] + self.PAINT_RADIUS),
+                            (mpos[0] + self.PAINT_RADIUS, mpos[1] + self.PAINT_RADIUS),
+                            (mpos[0], mpos[1] - self.PAINT_RADIUS),
+                        ),
+                    )
+
+                self.SCREEN.blit(self.BG, (0, 0))
+                self.SCREEN.blit(self.BRUSH_SURF, (0, 0))
+                self.BRUSH_SURF.fill((0, 0,0,0))
+            else:
+                # not in paint mode, just blit background
+                self.SCREEN.blit(self.BG, (0, 0))
+
+            self.MANAGER.draw_ui(self.SCREEN)
+
+            # ModernGL rendering
+            texture_data = self.SCREEN.get_view('1')
+            self.screen_texture.write(texture_data)
+            self.ctx.clear(self.BG_COLOR[0]/255.0, self.BG_COLOR[1]/255.0, self.BG_COLOR[2]/255.0, 1.0)
+            self.screen_texture.use(0)
+            self.vao.render()
+            pygame.display.flip()
+
+
+if TESTMODE:
     wm = SnakeWM()
     wm.run()
