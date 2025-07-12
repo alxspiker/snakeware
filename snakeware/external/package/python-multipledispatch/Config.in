@@ -1,0 +1,4 @@
+config BR2_PACKAGE_PYTHON_MULTIPLEDISPATCH
+    bool "python-multipledispatch"
+    help
+      Multiple dispatch for Python.

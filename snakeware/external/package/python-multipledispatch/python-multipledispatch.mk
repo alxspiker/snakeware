@@ -1,0 +1,6 @@
+PYTHON_MULTIPLEDISPATCH_VERSION = 1.0.0
+PYTHON_MULTIPLEDISPATCH_SOURCE = multipledispatch-$(PYTHON_MULTIPLEDISPATCH_VERSION).tar.gz
+PYTHON_MULTIPLEDISPATCH_SITE = https://files.pythonhosted.org/packages/source/m/multipledispatch
+PYTHON_MULTIPLEDISPATCH_SETUP_TYPE = setuptools
+PYTHON_MULTIPLEDISPATCH_DEPENDENCIES = python3
+$(eval $(python-package))
