@@ -1,0 +1,5 @@
+config BR2_PACKAGE_PYTHON_PYRR
+    bool "python-pyrr"
+    depends on BR2_PACKAGE_PYTHON_NUMPY
+    help
+      3D mathematical functions using NumPy.
