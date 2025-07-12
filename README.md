@@ -1,8 +1,3 @@
-dos2unix external/post-build.sh  
-cd buildroot_x86-64  
-make  
-cp output/images/rootfs.iso9660 ../snakeware_x86-64.iso  
-
 # snakeware
 snakeware is a free Linux distro with a Python userspace inspired by the Commodore 64. You are booted directly into a
 Python interpreter, which you can use to do whatever you want with your computer.
@@ -178,8 +173,95 @@ Building on Windows requires WSL (Ubuntu recommended) due to Linux dependencies.
    make host-meson
    make
    ```
-10. Run the build: `./build.sh x86-64`. If needed, force fresh clone: `rm -rf buildroot_x86-64 && ./build.sh x86-64`.
-11. Copy ISO manually if script fails: `cp buildroot_x86-64/output/images/rootfs.iso9660 snakeware_x86-64.iso`.
+10. Fix realloc warning in kernel tools:  
+   Create `external/patches/linux/0001-fix-objtool-realloc-warning.patch`:  
+   ```
+   --- a/tools/lib/subcmd/subcmd-util.h
+   +++ b/tools/lib/subcmd/subcmd-util.h
+   @@ -49,15 +49,8 @@ static NORETURN inline void die(const ch
+    static inline void *xrealloc(void *ptr, size_t size)
+    {
+    	void *ret = realloc(ptr, size);
+   -	if (!ret && !size)
+   -		ret = realloc(ptr, 1);
+   -	if (!ret) {
+   -		ret = realloc(ptr, size);
+   -		if (!ret && !size)
+   -			ret = realloc(ptr, 1);
+   -		if (!ret)
+   -			die("Out of memory, realloc failed");
+   -	}
+   +	if (!ret)
+   +		die("Out of memory, realloc failed");
+    	return ret;
+    }
+   ```
+   Then rebuild kernel:  
+   ```
+   cd buildroot_x86-64
+   make linux-dirclean
+   make linux
+   make
+   ```
+11. Fix python-pygame-gui hash parsing:  
+   Edit `external/package/python-pygame-gui/python-pygame-gui.hash` to use single spaces:  
+   ```
+   md5 1a488365037488f1abbe91c4e56d7d8b pygame_gui-0.5.6.tar.gz
+   sha256 e8c4e0e050603a1e4369f66010cd294bd5ef40a7955cf139921bf8d0fe9ec7ea pygame_gui-0.5.6.tar.gz
+   ```
+   Rebuild package:  
+   ```
+   make python-pygame-gui-dirclean
+   make python-pygame-gui
+   make
+   ```
+12. Add ModernGL and ModernGL Window:  
+   Create `external/package/python-moderngl/Config.in`:  
+   ```
+   config BR2_PACKAGE_PYTHON_MODERNGL
+       bool "python-moderngl"
+       help
+         ModernGL: Modern OpenGL binding for Python.
+   ```
+   Create `external/package/python-moderngl/python-moderngl.mk`:  
+   ```
+   PYTHON_MODERNGL_VERSION = 5.12.0
+   PYTHON_MODERNGL_SOURCE = moderngl-$(PYTHON_MODERNGL_VERSION).tar.gz
+   PYTHON_MODERNGL_SITE = https://files.pythonhosted.org/packages/source/m/moderngl
+   PYTHON_MODERNGL_SETUP_TYPE = setuptools
+   PYTHON_MODERNGL_DEPENDENCIES = python3 mesa3d libegl libgles
+   $(eval $(python-package))
+   ```
+   Create `external/package/python-moderngl/python-moderngl.hash`:  
+   ```
+   sha256 a7efc72ecb873c5a62031ade1921a7177b67cfdcb2e9410a7ab023f9e8192f4b moderngl-5.12.0.tar.gz
+   ```
+   For moderngl-window (version 2.4.3 for setup.py compatibility): Similar setup, with mk/hash as discussed.
+   Add to `external/Config.in`:  
+   ```
+   source "package/python-moderngl/Config.in"
+   source "package/python-moderngl-window/Config.in"
+   ```
+   Enable in defconfig:  
+   ```
+   BR2_PACKAGE_PYTHON_MODERNGL=y
+   BR2_PACKAGE_PYTHON_MODERNGL_WINDOW=y
+   ```
+   Manually download if needed:  
+   ```
+   cd dl
+   wget https://files.pythonhosted.org/packages/source/m/moderngl/moderngl-5.12.0.tar.gz
+   wget https://files.pythonhosted.org/packages/source/m/moderngl_window/moderngl_window-2.4.3.tar.gz
+   cd ..
+   ```
+13. Add Pillow (PIL) for image handling:  
+   Enable in `external/configs/x86-64_defconfig`:  
+   ```
+   BR2_PACKAGE_PYTHON_PILLOW=y
+   ```
+14. Run the build: `./build.sh x86-64`. If needed, force fresh clone: `rm -rf buildroot_x86-64 && ./build.sh x86-64`.
+15. Copy ISO manually if script fails: `cp buildroot_x86-64/output/images/rootfs.iso9660 snakeware_x86-64.iso`.
+16. Access ISO on Windows: In File Explorer, \\wsl$\Ubuntu\home\giesb\snakeware\snakeware\snakeware_x86-64.iso.
 
 ### Enabling Hardware Acceleration
 To add GPU support (Mesa, DRM, SDL2 KMSDRM), append to `external/configs/x86-64_defconfig` (or rpi4_defconfig for Pi):
