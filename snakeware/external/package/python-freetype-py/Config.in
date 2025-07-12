@@ -1,0 +1,5 @@
+config BR2_PACKAGE_PYTHON_FREETYPE_PY
+    bool "python-freetype-py"
+    depends on BR2_PACKAGE_FREETYPE  # System FreeType lib
+    help
+      Python bindings for FreeType font library.
