@@ -1,0 +1,4 @@
+config BR2_PACKAGE_PYTHON_GLCONTEXT
+    bool "python-glcontext"
+    help
+      Portable OpenGL context creation for Python.
