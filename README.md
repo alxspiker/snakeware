@@ -1,3 +1,8 @@
+dos2unix external/post-build.sh  
+cd buildroot_x86-64  
+make  
+cp output/images/rootfs.iso9660 ../snakeware_x86-64.iso  
+
 # snakeware
 snakeware is a free Linux distro with a Python userspace inspired by the Commodore 64. You are booted directly into a
 Python interpreter, which you can use to do whatever you want with your computer.
@@ -133,6 +138,7 @@ Building on Windows requires WSL (Ubuntu recommended) due to Linux dependencies.
    dos2unix build.sh
    find external -name "Config.in" -exec dos2unix {} \;
    dos2unix external/external.desc
+   dos2unix external/post-build.sh
    chmod +x build.sh
    ```
 5. Upgrade Meson to 1.4.1 (for GLib compatibility):  
